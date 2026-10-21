@@ -1,0 +1,1427 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="h-full w-full max-w-full overflow-x-hidden">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Super Diário Inteligente - Painel de Gestão Docente</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- React & ReactDOM CDN -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel Standalone for JSX compilation in browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Supabase Client CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Ocultar setas de input number */
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+        input[type="number"] {
+            appearance: textfield;
+            -moz-appearance: textfield;
+        }
+
+        @media (max-width: 400px) {
+            .stats-grid {
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: center !important;
+            }
+            .stats-grid > div {
+                width: 100% !important;
+                max-width: 220px !important;
+            }
+            .stats-grid-row {
+                display: flex !important;
+                justify-content: center !important;
+                gap: 0.75rem !important;
+                width: 100% !important;
+            }
+            .stats-grid-row > div {
+                flex: 1 !important;
+                max-width: 130px !important;
+            }
+            .stats-grid > div:last-child {
+                margin-top: 0.5rem !important;
+            }
+        }
+        @media (min-width: 401px) {
+            .stats-grid {
+                display: grid !important;
+                grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+                gap: 0.75rem !important;
+            }
+            .stats-grid-row {
+                display: contents !important;
+            }
+        }
+        @keyframes slideUpFade {
+            0% { opacity: 0; transform: translateY(15px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+        .animate-slide-up {
+            animation: slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 h-full w-full max-w-full overflow-x-hidden flex flex-col antialiased selection:bg-indigo-500 selection:text-white">
+    <div id="root" class="h-full w-full max-w-full overflow-x-hidden flex flex-col"></div>
+
+    <script type="text/babel">
+        const supabaseUrl = 'https://phraeztagyvlughrhshn.supabase.co';
+        const supabaseKey = 'sb_publishable_tjNlBQNUdhm3lTXvZWS3tw_mCR706QM';
+        const supabase = window.supabase.createClient(supabaseUrl, supabaseKey);
+
+        function App() {
+            const [activeTab, setActiveTab] = React.useState('notas');
+            const [showInfoModal, setShowInfoModal] = React.useState(false);
+            
+            const [classData, setClassData] = React.useState({});
+            const [selectedClass, setSelectedClass] = React.useState('');
+            
+            const currentClassInfo = (selectedClass && classData[selectedClass]) || { id: null, students: [], weights: { prova: 40, trabalho: 30, atitudinal: 30 } };
+            const students = currentClassInfo.students;
+            const weights = currentClassInfo.weights;
+
+            const setStudents = (newStudents) => {
+                if (!selectedClass) return;
+                setClassData(prev => ({
+                    ...prev,
+                    [selectedClass]: { ...prev[selectedClass], students: typeof newStudents === 'function' ? newStudents(prev[selectedClass].students) : newStudents }
+                }));
+            };
+
+            const setWeights = (newWeights) => {
+                if (!selectedClass) return;
+                setClassData(prev => {
+                    const currentWeights = prev[selectedClass]?.weights || { prova: 40, trabalho: 30, atitudinal: 30 };
+                    const resolvedWeights = typeof newWeights === 'function' ? newWeights(currentWeights) : newWeights;
+                    return {
+                        ...prev,
+                        [selectedClass]: { ...prev[selectedClass], weights: resolvedWeights }
+                    };
+                });
+            };
+
+            const [selectedStudentId, setSelectedStudentId] = React.useState(null);
+            const [exportStandard, setExportStandard] = React.useState('conceitos');
+            const [toast, setToast] = React.useState({ show: false, message: '', icon: '✅' });
+            const [isAddingMode, setIsAddingMode] = React.useState(false);
+            const [newStudentTemp, setNewStudentTemp] = React.useState(null);
+            
+            const [isClassMenuOpen, setIsClassMenuOpen] = React.useState(false);
+            const [isClassesExpanded, setIsClassesExpanded] = React.useState(false);
+            
+            const [classesList, setClassesList] = React.useState([]);
+            const [editingClassIndex, setEditingClassIndex] = React.useState(null);
+            const [editClassNameTemp, setEditClassNameTemp] = React.useState('');
+            const [isAddingClass, setIsAddingClass] = React.useState(false);
+            const [newClassNameTemp, setNewClassNameTemp] = React.useState('');
+
+            const menuRef = React.useRef(null);
+            const debounceTimersRef = React.useRef({});
+
+            const showToast = (message, icon = '✅') => {
+                setToast({ show: true, message, icon });
+                setTimeout(() => {
+                    setToast(prev => ({ ...prev, show: false }));
+                }, 3000);
+            };
+
+            const calculateWeightedAverageForWeights = (student, w) => {
+                const totalWeight = Number(w.prova) + Number(w.trabalho) + Number(w.atitudinal);
+                if (totalWeight === 0) return 0;
+                const avg = ((Number(student.prova) * Number(w.prova)) + (Number(student.trabalho) * Number(w.trabalho)) + (Number(student.atitudinal) * Number(w.atitudinal))) / totalWeight;
+                return Math.round(avg * 100) / 100;
+            };
+
+            const calculateWeightedAverage = (student) => {
+                return calculateWeightedAverageForWeights(student, weights);
+            };
+
+            const generateDescriptiveText = (student, avg) => {
+                let performanceText = avg >= 8.0 ? "demonstrou excelente aproveitamento" : avg >= 6.0 ? "apresentou bom desempenho acadêmico" : "encontra-se em fase de consolidação de aprendizagem";
+                let partText = student.participacao === 'Alta' ? "altamente participativo(a)" : student.participacao === 'Média' ? "participação adequada" : "participação ainda tímida";
+                let compText = student.comportamento === 'Colaborativo' ? "postura exemplar" : student.comportamento === 'Distraído' ? "episódios frequentes de dispersão" : "comportamento adequado";
+                let evolText = student.evolucao === 'Constante' ? "evolução constante" : student.evolucao === 'Linear' ? "progresso linear" : "desenvolvimento oscilante";
+
+                return `O(A) estudante ${student.name} ${performanceText}, obtendo média ponderada final de ${avg.toFixed(1)}. No aspecto atitudinal, demonstrou ${compText}, acompanhado(a) de ${partText}. Trajetória caracterizada por ${evolText}. A equipe pedagógica segue à disposição.`;
+            };
+
+            const generateInterventionPlan = (student, avg) => {
+                const foco = student.intervencaoFoco || "superação de lacunas de aprendizagem";
+                const needed = Math.max(0, Math.ceil(((6.0 - (avg * 0.6)) / 0.4) * 10) / 10);
+                return `PLANO DE INTERVENÇÃO PEDAGÓGICA (PIP)\n\n` +
+                       `1. DIAGNÓSTICO E CONTEXTUALIZAÇÃO\n` +
+                       `- Estudante: ${student.name} | Média Atual: ${avg.toFixed(1)} (Nota necessária na recuperação: ${needed.toFixed(1)})\n` +
+                       `- Perfil Mapeado: Participação ${student.participacao.toLowerCase()}, comportamento ${student.comportamento.toLowerCase()} e evolução ${student.evolucao.toLowerCase()}.\n` +
+                       `- Foco Principal da Dificuldade: ${foco}.\n\n` +
+                       `2. ESTRATÉGIAS E AÇÕES PEDAGÓGICAS\n` +
+                       `- Atendimento individualizado e orientação direcionada em ${foco.toLowerCase()}.\n` +
+                       `- Plano de estudos semanal estruturado com roteiro de atividades graduais.\n` +
+                       `- Disponibilização de material de apoio complementar e exercícios de fixação.\n\n` +
+                       `3. AVALIAÇÃO E METAS DE ACOMPANHAMENTO\n` +
+                       `- Prazo de Execução: Acompanhamento contínuo durante o ciclo de recuperação.\n` +
+                       `- Critérios de Reavaliação: Avaliação de recuperação paralela e realização das atividades de apoio.\n` +
+                       `- Registro de Progresso: Monitoramento periódico do avanço pedagógico e devolutiva formativa ao(à) estudante.`;
+            };
+
+            // Carregar dados iniciais do Supabase
+            const loadSupabaseData = React.useCallback(async () => {
+                try {
+                    const [
+                        { data: turmasData, error: turmasError },
+                        { data: pesosData, error: pesosError },
+                        { data: estudantesData, error: estudantesError },
+                        { data: pareceresData, error: pareceresError }
+                    ] = await Promise.all([
+                        supabase.from('turma').select('*').order('id', { ascending: true }),
+                        supabase.from('pesos_turma').select('*'),
+                        supabase.from('estudante').select('*'),
+                        supabase.from('parecer').select('*')
+                    ]);
+
+                    if (turmasError) {
+                        console.error('Erro ao carregar turmas:', turmasError);
+                        return;
+                    }
+
+                    const turmas = turmasData || [];
+                    const pesos = pesosData || [];
+                    const estudantes = estudantesData || [];
+                    const pareceres = pareceresData || [];
+
+                    const newClassesList = [];
+                    const newClassData = {};
+
+                    turmas.forEach(t => {
+                        const className = t.nome ?? t.name ?? `Turma ${t.id}`;
+                        newClassesList.push(className);
+
+                        const pesoRow = pesos.find(p => p.turma_id === t.id);
+                        const classWeights = {
+                            prova: Number(pesoRow?.prova ?? pesoRow?.peso_prova ?? 40),
+                            trabalho: Number(pesoRow?.trabalho ?? pesoRow?.peso_trabalho ?? 30),
+                            atitudinal: Number(pesoRow?.atitudinal ?? pesoRow?.peso_atitudinal ?? 30)
+                        };
+
+                        const classStudents = estudantes
+                            .filter(e => e.turma_id === t.id)
+                            .map(e => {
+                                const parecerRow = pareceres.find(p => (p.estudante_id ?? p.aluno_id) === e.id);
+                                const rawGrades = {
+                                    prova: Number(e.prova ?? 0),
+                                    trabalho: Number(e.trabalho ?? 0),
+                                    atitudinal: Number(e.atitudinal ?? 0)
+                                };
+                                const avg = calculateWeightedAverageForWeights(rawGrades, classWeights);
+                                const isApproved = avg >= 6.0;
+                                const studentObj = {
+                                    id: e.id,
+                                    turma_id: t.id,
+                                    parecer_id: parecerRow?.id || null,
+                                    name: e.nome ?? e.name ?? '',
+                                    ...rawGrades,
+                                    participacao: parecerRow?.participacao || 'Média',
+                                    comportamento: parecerRow?.comportamento || 'Colaborativo',
+                                    evolucao: parecerRow?.evolucao || 'Constante',
+                                    intervencaoFoco: isApproved ? null : (parecerRow?.intervencao_foco ?? parecerRow?.foco_intervencao ?? 'Acompanhamento regular'),
+                                    texto_parecer: parecerRow?.texto_parecer ?? null,
+                                    texto_pip: isApproved ? null : (parecerRow?.texto_pip ?? null)
+                                };
+                                return studentObj;
+                            })
+                            .sort((a, b) => a.name.localeCompare(b.name));
+
+                        newClassData[className] = {
+                            id: t.id,
+                            weightsId: pesoRow?.id || null,
+                            students: classStudents,
+                            weights: classWeights
+                        };
+                    });
+
+                    setClassesList(newClassesList);
+                    setClassData(newClassData);
+                    setSelectedClass(prev => (prev && newClassesList.includes(prev)) ? prev : (newClassesList[0] || ''));
+                } catch (err) {
+                    console.error('Erro na sincronização inicial com o Supabase:', err);
+                }
+            }, []);
+
+            React.useEffect(() => {
+                loadSupabaseData();
+            }, [loadSupabaseData]);
+
+            React.useEffect(() => {
+                if (!isClassMenuOpen) {
+                    setIsClassesExpanded(false);
+                    setIsAddingClass(false);
+                    setEditingClassIndex(null);
+                }
+            }, [isClassMenuOpen]);
+
+            React.useEffect(() => {
+                const handleClickOutside = (event) => {
+                    if (menuRef.current && !menuRef.current.contains(event.target)) {
+                        setIsClassMenuOpen(false);
+                    }
+                };
+                
+                if (isClassMenuOpen) {
+                    document.addEventListener('mousedown', handleClickOutside);
+                    document.addEventListener('touchstart', handleClickOutside);
+                }
+                
+                return () => {
+                    document.removeEventListener('mousedown', handleClickOutside);
+                    document.removeEventListener('touchstart', handleClickOutside);
+                };
+            }, [isClassMenuOpen]);
+
+            React.useEffect(() => {
+                if (isAddingMode) {
+                    setIsAddingMode(false);
+                    setNewStudentTemp(null);
+                }
+            }, [selectedClass]);
+
+            const openCreateClassMenu = (e) => {
+                if (e) e.stopPropagation();
+                setIsClassMenuOpen(true);
+                setIsClassesExpanded(true);
+                setIsAddingClass(true);
+                setNewClassNameTemp('');
+            };
+
+            const handleClassSelectorClick = () => {
+                setIsClassMenuOpen(!isClassMenuOpen);
+            };
+
+            const startAddingClass = (e) => {
+                e.stopPropagation();
+                setIsAddingClass(true);
+                setNewClassNameTemp('');
+            };
+
+            // CRUD: Criar Turma + Pesos Iniciais
+            const saveNewClass = async (e) => {
+                if (e) e.stopPropagation();
+                if (newClassNameTemp.trim()) {
+                    const newName = newClassNameTemp.trim();
+                    if (classesList.includes(newName)) {
+                        showToast("Já existe uma turma com este nome.", "⚠️");
+                        return;
+                    }
+
+                    const isFirstClass = classesList.length === 0;
+                    const defaultWeights = { prova: 40, trabalho: 30, atitudinal: 30 };
+
+                    try {
+                        let { data: novaTurma, error: turmaError } = await supabase
+                            .from('turma')
+                            .insert([{ nome: newName }])
+                            .select()
+                            .single();
+
+                        if (turmaError && turmaError.code === 'PGRST204') {
+                            ({ data: novaTurma, error: turmaError } = await supabase
+                                .from('turma')
+                                .insert([{ name: newName }])
+                                .select()
+                                .single());
+                        }
+
+                        if (turmaError) {
+                            console.error('Erro ao criar turma no Supabase:', turmaError);
+                            showToast("Erro ao salvar turma na nuvem.", "⚠️");
+                            return;
+                        }
+
+                        let { data: novoPeso, error: pesoError } = await supabase
+                            .from('pesos_turma')
+                            .insert([{
+                                turma_id: novaTurma.id,
+                                prova: defaultWeights.prova,
+                                trabalho: defaultWeights.trabalho,
+                                atitudinal: defaultWeights.atitudinal
+                            }])
+                            .select()
+                            .single();
+
+                        if (pesoError && pesoError.code === 'PGRST204') {
+                            ({ data: novoPeso, error: pesoError } = await supabase
+                                .from('pesos_turma')
+                                .insert([{
+                                    turma_id: novaTurma.id,
+                                    peso_prova: defaultWeights.prova,
+                                    peso_trabalho: defaultWeights.trabalho,
+                                    peso_atitudinal: defaultWeights.atitudinal
+                                }])
+                                .select()
+                                .single());
+                        }
+
+                        setClassesList(prev => [...prev, newName]);
+                        setClassData(prev => ({
+                            ...prev,
+                            [newName]: {
+                                id: novaTurma.id,
+                                weightsId: novoPeso?.id || null,
+                                students: [],
+                                weights: defaultWeights
+                            }
+                        }));
+                        if (isFirstClass || !selectedClass) {
+                            setSelectedClass(newName);
+                        }
+                        setIsAddingClass(false);
+                        setNewClassNameTemp('');
+                        if (isFirstClass) {
+                            setIsClassMenuOpen(false);
+                        }
+                        showToast(`Turma ${newName} adicionada!`, '📁');
+                    } catch (err) {
+                        console.error('Erro ao adicionar turma:', err);
+                        showToast("Erro inesperado ao criar turma.", "⚠️");
+                    }
+                }
+            };
+
+            const cancelAddClass = (e) => {
+                e.stopPropagation();
+                setIsAddingClass(false);
+            };
+
+            const startEditingClass = (e, index, currentName) => {
+                e.stopPropagation();
+                setEditingClassIndex(index);
+                setEditClassNameTemp(currentName);
+            };
+
+            // CRUD: Renomear Turma
+            const saveEditClass = async (e, index) => {
+                e.stopPropagation();
+                const newName = editClassNameTemp.trim();
+                if (newName) {
+                    if (newName !== classesList[index] && classesList.includes(newName)) {
+                        showToast("Já existe uma turma com este nome.", "⚠️");
+                        return;
+                    }
+                    const oldName = classesList[index];
+                    const turmaId = classData[oldName]?.id;
+
+                    if (turmaId) {
+                        let { error } = await supabase
+                            .from('turma')
+                            .update({ nome: newName })
+                            .eq('id', turmaId);
+
+                        if (error && error.code === 'PGRST204') {
+                            ({ error } = await supabase
+                                .from('turma')
+                                .update({ name: newName })
+                                .eq('id', turmaId));
+                        }
+
+                        if (error) {
+                            console.error('Erro ao renomear turma:', error);
+                            showToast("Erro ao renomear turma na nuvem.", "⚠️");
+                            return;
+                        }
+                    }
+
+                    const newList = [...classesList];
+                    newList[index] = newName;
+                    setClassesList(newList);
+                    
+                    setClassData(prev => {
+                        const newData = { ...prev };
+                        newData[newName] = newData[oldName];
+                        delete newData[oldName];
+                        return newData;
+                    });
+
+                    if (selectedClass === oldName) setSelectedClass(newName); 
+                    setEditingClassIndex(null);
+                    showToast(`Turma renomeada com sucesso!`, '✏️');
+                }
+            };
+
+            const cancelEditClass = (e) => {
+                e.stopPropagation();
+                setEditingClassIndex(null);
+            };
+
+            // CRUD: Remover Turma
+            const removeClass = async (e, index) => {
+                e.stopPropagation();
+                const removed = classesList[index];
+                const turmaInfo = classData[removed];
+                const turmaId = turmaInfo?.id;
+
+                if (turmaId) {
+                    try {
+                        const studentIds = (turmaInfo.students || []).map(s => s.id).filter(Boolean);
+                        if (studentIds.length > 0) {
+                            await supabase.from('parecer').delete().in('estudante_id', studentIds);
+                        }
+                        await supabase.from('estudante').delete().eq('turma_id', turmaId);
+                        await supabase.from('pesos_turma').delete().eq('turma_id', turmaId);
+                        const { error } = await supabase.from('turma').delete().eq('id', turmaId);
+                        if (error) {
+                            console.error('Erro ao excluir turma:', error);
+                            showToast("Erro ao remover turma na nuvem.", "⚠️");
+                            return;
+                        }
+                    } catch (err) {
+                        console.error('Erro ao excluir turma:', err);
+                        showToast("Erro ao remover turma na nuvem.", "⚠️");
+                        return;
+                    }
+                }
+
+                const newList = [...classesList];
+                newList.splice(index, 1);
+                setClassesList(newList);
+                
+                setClassData(prev => {
+                    const newData = { ...prev };
+                    delete newData[removed];
+                    return newData;
+                });
+
+                if (selectedClass === removed) {
+                    setSelectedClass(newList[0] || '');
+                }
+                if (editingClassIndex === index) {
+                    setEditingClassIndex(null);
+                }
+                showToast(`Turma ${removed} removida!`, '🗑️');
+            };
+
+            // CRUD: Atualizar Pesos da Turma
+            const persistWeightsToSupabase = async (turmaId, updatedWeights) => {
+                if (!turmaId) return;
+                try {
+                    let { data, error } = await supabase
+                        .from('pesos_turma')
+                        .update({
+                            prova: updatedWeights.prova,
+                            trabalho: updatedWeights.trabalho,
+                            atitudinal: updatedWeights.atitudinal
+                        })
+                        .eq('turma_id', turmaId)
+                        .select();
+
+                    if (error && error.code === 'PGRST204') {
+                        ({ data, error } = await supabase
+                            .from('pesos_turma')
+                            .update({
+                                peso_prova: updatedWeights.prova,
+                                peso_trabalho: updatedWeights.trabalho,
+                                peso_atitudinal: updatedWeights.atitudinal
+                            })
+                            .eq('turma_id', turmaId)
+                            .select());
+                    }
+
+                    if (!error && (!data || data.length === 0)) {
+                        const { error: insertErr } = await supabase
+                            .from('pesos_turma')
+                            .insert([{
+                                turma_id: turmaId,
+                                prova: updatedWeights.prova,
+                                trabalho: updatedWeights.trabalho,
+                                atitudinal: updatedWeights.atitudinal
+                            }]);
+                        if (insertErr && insertErr.code === 'PGRST204') {
+                            await supabase
+                                .from('pesos_turma')
+                                .insert([{
+                                    turma_id: turmaId,
+                                    peso_prova: updatedWeights.prova,
+                                    peso_trabalho: updatedWeights.trabalho,
+                                    peso_atitudinal: updatedWeights.atitudinal
+                                }]);
+                        }
+                    }
+                } catch (err) {
+                    console.error('Erro ao salvar pesos da turma:', err);
+                }
+            };
+
+            const handleWeightChange = (field, rawValue) => {
+                if (!selectedClass) return;
+                const val = parseFloat(rawValue) || 0;
+                const updatedWeights = { ...weights, [field]: val };
+                const updatedStudents = students.map(s => {
+                    const avg = calculateWeightedAverageForWeights(s, updatedWeights);
+                    const isApproved = avg >= 6.0;
+                    const nextFoco = isApproved ? null : (s.intervencaoFoco || 'Acompanhamento regular');
+                    const nextStudent = { ...s, intervencaoFoco: nextFoco };
+                    nextStudent.texto_parecer = generateDescriptiveText(nextStudent, avg);
+                    nextStudent.texto_pip = isApproved ? null : generateInterventionPlan(nextStudent, avg);
+                    return nextStudent;
+                });
+                setWeights(updatedWeights);
+                setStudents(updatedStudents);
+
+                const turmaId = currentClassInfo.id;
+                const timerKey = `weights_${turmaId}`;
+                if (debounceTimersRef.current[timerKey]) {
+                    clearTimeout(debounceTimersRef.current[timerKey]);
+                }
+                debounceTimersRef.current[timerKey] = setTimeout(() => {
+                    persistWeightsToSupabase(turmaId, updatedWeights);
+                    updatedStudents.forEach(s => persistParecerToSupabase(s, updatedWeights));
+                }, 400);
+            };
+
+            const getStudentStatus = (avg) => {
+                if (avg >= 6.0) return { status: 'Aprovado', color: 'bg-emerald-50 text-emerald-700 border border-emerald-200' };
+                const needed = Math.max(0, Math.ceil(((6.0 - (avg * 0.6)) / 0.4) * 10) / 10);
+                return { status: `Recuperação (Nec. ${needed})`, color: 'bg-amber-50 text-amber-700 border border-amber-200' };
+            };
+
+            const totalAvg = students.reduce((acc, s) => acc + calculateWeightedAverage(s), 0);
+            const generalAvg = students.length > 0 ? (totalAvg / students.length).toFixed(1) : '0.0';
+            const approvedCount = students.filter(s => calculateWeightedAverage(s) >= 6.0).length;
+            const recoveryCount = students.length - approvedCount;
+
+            // CRUD: Persistir dados de Parecer no Supabase
+            const persistParecerToSupabase = async (studentObj, customWeights = null) => {
+                if (!studentObj || !studentObj.id) return;
+                const activeWeights = customWeights || weights;
+                const avg = calculateWeightedAverageForWeights(studentObj, activeWeights);
+                const isApproved = avg >= 6.0;
+                const focoFinal = isApproved ? null : (studentObj.intervencaoFoco || 'Acompanhamento regular');
+                const textoParecerFinal = studentObj.texto_parecer || generateDescriptiveText(studentObj, avg);
+                const textoPipFinal = isApproved ? null : (studentObj.texto_pip || generateInterventionPlan({ ...studentObj, intervencaoFoco: focoFinal }, avg));
+
+                try {
+                    let payload = {
+                        estudante_id: studentObj.id,
+                        participacao: studentObj.participacao,
+                        comportamento: studentObj.comportamento,
+                        evolucao: studentObj.evolucao,
+                        intervencao_foco: focoFinal,
+                        texto_parecer: textoParecerFinal,
+                        texto_pip: textoPipFinal
+                    };
+
+                    let { data, error } = await supabase
+                        .from('parecer')
+                        .update(payload)
+                        .eq('estudante_id', studentObj.id)
+                        .select();
+
+                    if (error && error.code === 'PGRST204') {
+                        payload = {
+                            estudante_id: studentObj.id,
+                            participacao: studentObj.participacao,
+                            comportamento: studentObj.comportamento,
+                            evolucao: studentObj.evolucao,
+                            foco_intervencao: focoFinal,
+                            texto_parecer: textoParecerFinal,
+                            texto_pip: textoPipFinal
+                        };
+                        ({ data, error } = await supabase
+                            .from('parecer')
+                            .update(payload)
+                            .eq('estudante_id', studentObj.id)
+                            .select());
+                    }
+
+                    if (!error && (!data || data.length === 0)) {
+                        await supabase.from('parecer').insert([payload]);
+                    }
+                } catch (err) {
+                    console.error('Erro ao salvar parecer no Supabase:', err);
+                }
+            };
+
+            // CRUD: Persistir estudante (nome e notas) no Supabase
+            const persistStudentToSupabase = async (studentObj) => {
+                if (!studentObj || !studentObj.id) return;
+                try {
+                    let { error } = await supabase
+                        .from('estudante')
+                        .update({
+                            nome: studentObj.name,
+                            prova: studentObj.prova,
+                            trabalho: studentObj.trabalho,
+                            atitudinal: studentObj.atitudinal
+                        })
+                        .eq('id', studentObj.id);
+
+                    if (error && error.code === 'PGRST204') {
+                        ({ error } = await supabase
+                            .from('estudante')
+                            .update({
+                                name: studentObj.name,
+                                prova: studentObj.prova,
+                                trabalho: studentObj.trabalho,
+                                atitudinal: studentObj.atitudinal
+                            })
+                            .eq('id', studentObj.id));
+                    }
+
+                    if (error) {
+                        console.error('Erro ao atualizar estudante:', error);
+                    }
+                } catch (err) {
+                    console.error('Erro ao atualizar estudante:', err);
+                }
+            };
+
+            const updateStudentField = (index, field, value) => {
+                const updated = [...students];
+                const targetStudent = { ...updated[index] };
+
+                if (field === 'name') {
+                    targetStudent.name = value;
+                } else {
+                    let num = parseFloat(value);
+                    if (isNaN(num)) num = 0;
+                    if (num < 0) num = 0;
+                    if (num > 10) num = 10;
+                    targetStudent[field] = num;
+                }
+
+                const avg = calculateWeightedAverage(targetStudent);
+                const isApproved = avg >= 6.0;
+                targetStudent.intervencaoFoco = isApproved ? null : (targetStudent.intervencaoFoco || 'Acompanhamento regular');
+                targetStudent.texto_parecer = generateDescriptiveText(targetStudent, avg);
+                targetStudent.texto_pip = isApproved ? null : generateInterventionPlan(targetStudent, avg);
+
+                updated[index] = targetStudent;
+                setStudents(updated);
+
+                const timerKey = `student_${targetStudent.id}`;
+                if (debounceTimersRef.current[timerKey]) {
+                    clearTimeout(debounceTimersRef.current[timerKey]);
+                }
+                debounceTimersRef.current[timerKey] = setTimeout(() => {
+                    persistStudentToSupabase(targetStudent);
+                    persistParecerToSupabase(targetStudent);
+                }, 400);
+            };
+
+            const addStudent = () => {
+                if (classesList.length === 0) {
+                    openCreateClassMenu();
+                    return;
+                }
+                setIsAddingMode(true);
+                setNewStudentTemp({
+                    name: "", prova: "", trabalho: "", atitudinal: "",
+                    participacao: "Média", comportamento: "Colaborativo", evolucao: "Constante", intervencaoFoco: "Acompanhamento regular"
+                });
+            };
+
+            // CRUD: Adicionar Novo Estudante + Parecer Inicial
+            const handleSaveNewStudent = async () => {
+                if (!newStudentTemp.name.trim()) {
+                    showToast("Por favor, preencha o nome do aluno antes de salvar.", "⚠️");
+                    return;
+                }
+                const p = newStudentTemp.prova !== "" ? parseFloat(newStudentTemp.prova) : 0;
+                const t = newStudentTemp.trabalho !== "" ? parseFloat(newStudentTemp.trabalho) : 0;
+                const a = newStudentTemp.atitudinal !== "" ? parseFloat(newStudentTemp.atitudinal) : 0;
+
+                const finalName = newStudentTemp.name.trim();
+                const finalProva = Math.min(10, Math.max(0, isNaN(p) ? 0 : p));
+                const finalTrabalho = Math.min(10, Math.max(0, isNaN(t) ? 0 : t));
+                const finalAtitudinal = Math.min(10, Math.max(0, isNaN(a) ? 0 : a));
+                const turmaId = currentClassInfo.id;
+
+                try {
+                    let { data: insertedStudent, error: studentError } = await supabase
+                        .from('estudante')
+                        .insert([{
+                            turma_id: turmaId,
+                            nome: finalName,
+                            prova: finalProva,
+                            trabalho: finalTrabalho,
+                            atitudinal: finalAtitudinal
+                        }])
+                        .select()
+                        .single();
+
+                    if (studentError && studentError.code === 'PGRST204') {
+                        ({ data: insertedStudent, error: studentError } = await supabase
+                            .from('estudante')
+                            .insert([{
+                                turma_id: turmaId,
+                                name: finalName,
+                                prova: finalProva,
+                                trabalho: finalTrabalho,
+                                atitudinal: finalAtitudinal
+                            }])
+                            .select()
+                            .single());
+                    }
+
+                    if (studentError) {
+                        console.error('Erro ao inserir estudante:', studentError);
+                        showToast("Erro ao salvar estudante no banco de dados.", "⚠️");
+                        return;
+                    }
+
+                    const baseStudent = {
+                        ...newStudentTemp,
+                        id: insertedStudent.id,
+                        turma_id: turmaId,
+                        name: finalName,
+                        prova: finalProva,
+                        trabalho: finalTrabalho,
+                        atitudinal: finalAtitudinal
+                    };
+
+                    const avg = calculateWeightedAverage(baseStudent);
+                    const isApproved = avg >= 6.0;
+                    const initialFoco = isApproved ? null : (baseStudent.intervencaoFoco || 'Acompanhamento regular');
+                    const initialTextoParecer = generateDescriptiveText(baseStudent, avg);
+                    const initialTextoPip = isApproved ? null : generateInterventionPlan({ ...baseStudent, intervencaoFoco: initialFoco }, avg);
+
+                    let parecerPayload = {
+                        estudante_id: insertedStudent.id,
+                        participacao: baseStudent.participacao,
+                        comportamento: baseStudent.comportamento,
+                        evolucao: baseStudent.evolucao,
+                        intervencao_foco: initialFoco,
+                        texto_parecer: initialTextoParecer,
+                        texto_pip: initialTextoPip
+                    };
+
+                    let { data: insertedParecer, error: parecerError } = await supabase
+                        .from('parecer')
+                        .insert([parecerPayload])
+                        .select()
+                        .single();
+
+                    if (parecerError && parecerError.code === 'PGRST204') {
+                        parecerPayload = {
+                            estudante_id: insertedStudent.id,
+                            participacao: baseStudent.participacao,
+                            comportamento: baseStudent.comportamento,
+                            evolucao: baseStudent.evolucao,
+                            foco_intervencao: initialFoco,
+                            texto_parecer: initialTextoParecer,
+                            texto_pip: initialTextoPip
+                        };
+                        ({ data: insertedParecer, error: parecerError } = await supabase
+                            .from('parecer')
+                            .insert([parecerPayload])
+                            .select()
+                            .single());
+                    }
+
+                    const finalStudent = {
+                        ...baseStudent,
+                        intervencaoFoco: initialFoco,
+                        parecer_id: insertedParecer?.id || null,
+                        texto_parecer: initialTextoParecer,
+                        texto_pip: initialTextoPip
+                    };
+
+                    const updated = [...students, finalStudent].sort((a, b) => a.name.localeCompare(b.name));
+                    setStudents(updated);
+                    setIsAddingMode(false);
+                    setNewStudentTemp(null);
+                    showToast(`Aluno salvo! Lista reorganizada e abas atualizadas.`, "✅");
+                } catch (err) {
+                    console.error('Erro ao salvar novo aluno:', err);
+                    showToast("Erro inesperado ao salvar aluno.", "⚠️");
+                }
+            };
+
+            const handleCancelNewStudent = () => {
+                setIsAddingMode(false);
+                setNewStudentTemp(null);
+            };
+
+            // CRUD: Remover Estudante
+            const removeStudent = async (index) => {
+                const studentToRemove = students[index];
+                if (studentToRemove && studentToRemove.id) {
+                    try {
+                        await supabase.from('parecer').delete().eq('estudante_id', studentToRemove.id);
+                        const { error } = await supabase.from('estudante').delete().eq('id', studentToRemove.id);
+                        if (error) {
+                            console.error('Erro ao remover aluno:', error);
+                            showToast("Erro ao remover aluno do banco.", "⚠️");
+                            return;
+                        }
+                    } catch (err) {
+                        console.error('Erro ao remover aluno:', err);
+                        showToast("Erro ao remover aluno do banco.", "⚠️");
+                        return;
+                    }
+                }
+                const updated = students.filter((_, i) => i !== index);
+                setStudents(updated);
+                showToast("Aluno removido.", "🗑️");
+            };
+
+            // CRUD: Atualizar características e textos do parecer
+            const updateStudentTrait = (id, trait, value) => {
+                let updatedStudentRef = null;
+                const updatedList = students.map(s => {
+                    if (s.id !== id) return s;
+                    const nextStudent = { ...s, [trait]: value };
+                    const avg = calculateWeightedAverage(nextStudent);
+                    const isApproved = avg >= 6.0;
+                    nextStudent.intervencaoFoco = isApproved ? null : (nextStudent.intervencaoFoco || 'Acompanhamento regular');
+                    nextStudent.texto_parecer = generateDescriptiveText(nextStudent, avg);
+                    nextStudent.texto_pip = isApproved ? null : generateInterventionPlan(nextStudent, avg);
+                    updatedStudentRef = nextStudent;
+                    return nextStudent;
+                });
+                setStudents(updatedList);
+
+                if (updatedStudentRef) {
+                    const timerKey = `parecer_${id}`;
+                    if (debounceTimersRef.current[timerKey]) {
+                        clearTimeout(debounceTimersRef.current[timerKey]);
+                    }
+                    debounceTimersRef.current[timerKey] = setTimeout(() => {
+                        persistParecerToSupabase(updatedStudentRef);
+                    }, 400);
+                }
+            };
+
+            const updateStudentCustomText = (id, field, value) => {
+                let updatedStudentRef = null;
+                const updatedList = students.map(s => {
+                    if (s.id !== id) return s;
+                    const nextStudent = { ...s, [field]: value };
+                    updatedStudentRef = nextStudent;
+                    return nextStudent;
+                });
+                setStudents(updatedList);
+
+                if (updatedStudentRef) {
+                    const timerKey = `parecer_${id}`;
+                    if (debounceTimersRef.current[timerKey]) {
+                        clearTimeout(debounceTimersRef.current[timerKey]);
+                    }
+                    debounceTimersRef.current[timerKey] = setTimeout(() => {
+                        persistParecerToSupabase(updatedStudentRef);
+                    }, 500);
+                }
+            };
+
+            const generateExporterContent = () => {
+                if (exportStandard === 'conceitos') {
+                    let output = "=== SISTEMA ESCOLAR - EXPORTAÇÃO POR CONCEITOS ===\n";
+                    output += `ESCOLA: COLÉGIO ESTADUAL MODELO | TURMA: ${selectedClass.toUpperCase()}\n\n`;
+                    students.forEach((s, idx) => {
+                        const avg = calculateWeightedAverage(s);
+                        let conceito = 'D (Insuficiente)';
+                        if (avg >= 9.0) conceito = 'A (Excelente)';
+                        else if (avg >= 7.5) conceito = 'B (Bom)';
+                        else if (avg >= 6.0) conceito = 'C (Regular)';
+                        output += `${idx + 1}. ${s.name.padEnd(25, ' ')} | Média: ${avg.toFixed(1)} | Conceito: ${conceito}\n`;
+                    });
+                    return output;
+                } else if (exportStandard === 'csv') {
+                    let output = "ID;NOME_ALUNO;PROVA;TRABALHO;ATITUDINAL;MEDIA_PONDERADA;STATUS\n";
+                    students.forEach(s => {
+                        const avg = calculateWeightedAverage(s);
+                        const status = avg >= 6.0 ? 'APROVADO' : 'RECUPERACAO';
+                        output += `${s.id};${s.name};${s.prova};${s.trabalho};${s.atitudinal};${avg.toFixed(1)};${status}\n`;
+                    });
+                    return output;
+                } else if (exportStandard === 'detalhado') {
+                    let output = "=== RELATÓRIO DETALHADO DE DESEMPENHO ===\n";
+                    output += `TURMA: ${selectedClass.toUpperCase()}\n`;
+                    output += `--------------------------------------------------\n\n`;
+                    students.forEach((s, idx) => {
+                        const avg = calculateWeightedAverage(s);
+                        const status = avg >= 6.0 ? 'Aprovado' : 'Recuperação';
+                        output += `ALUNO(A): ${s.name}\n`;
+                        output += `  - Notas: Prova (${s.prova}), Trabalho (${s.trabalho}), Atitudinal (${s.atitudinal})\n`;
+                        output += `  - Média Final: ${avg.toFixed(1)} [${status}]\n`;
+                        output += `  - Perfil Comportamental: Participação ${s.participacao}, Comportamento ${s.comportamento}, Evolução ${s.evolucao}\n`;
+                        if (avg < 6.0 && s.intervencaoFoco) {
+                            output += `  - Foco de Intervenção: ${s.intervencaoFoco}\n`;
+                        }
+                        output += `\n`;
+                    });
+                    return output;
+                }
+            };
+
+            const copyToClipboard = (text, successMsg) => {
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                showToast(successMsg);
+            };
+
+            const downloadFile = () => {
+                const content = generateExporterContent();
+                const extension = exportStandard === 'csv' ? 'csv' : 'txt';
+                const filename = `exportacao_diario.${extension}`;
+                const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                showToast(`Arquivo ${filename} baixado com sucesso!`, '💾');
+            };
+
+            const hasClasses = classesList.length > 0;
+            const selectedStudent = students.find(s => s.id === selectedStudentId) || students[0];
+            const weightSum = weights.prova + weights.trabalho + weights.atitudinal;
+
+            return (
+                <div className="flex flex-col min-h-full relative bg-slate-50 w-full max-w-full overflow-x-hidden">
+                    {/* Header */}
+                    <header className="bg-white/90 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-30 w-full max-w-full">
+                        <div className={`max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-3 sm:py-4 flex flex-row items-center justify-between gap-4 ${!hasClasses ? 'max-[440px]:flex-col max-[440px]:items-center max-[440px]:gap-3' : 'max-[350px]:flex-col max-[350px]:items-center max-[350px]:gap-3'}`}>
+                            <div className="flex items-center space-x-3 sm:space-x-4 min-w-0">
+                                <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-gradient-to-br from-indigo-500 to-indigo-700 flex items-center justify-center text-white shadow-md shadow-indigo-200/50 font-bold text-lg sm:text-xl shrink-0">📚</div>
+                                <div className="flex flex-col justify-center">
+                                    <h1 className="font-extrabold text-slate-900 text-sm sm:text-base md:text-lg lg:text-xl leading-tight tracking-tight">Super Diário <span className="text-indigo-600">Inteligente</span></h1>
+                                    <p className="text-[10px] sm:text-xs md:text-sm font-medium text-slate-500 tracking-wide mt-0.5">Painel de Gestão Docente</p>
+                                </div>
+                            </div>
+                            
+                            {/* Toast notification */}
+                            <div className={`fixed top-20 right-4 z-50 transform transition-all duration-300 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-xl flex items-center space-x-3 text-sm max-w-[90vw] ${toast.show ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'}`}>
+                                <span className="shrink-0">{toast.icon}</span><span className="truncate">{toast.message}</span>
+                            </div>
+
+                            {/* Dropdown Menu & Class Selector */}
+                            <div className="max-[450px]:static relative" ref={menuRef}>
+                                <button 
+                                    onClick={handleClassSelectorClick}
+                                    className="group flex items-center bg-slate-50 hover:bg-white border border-slate-200 hover:border-indigo-200 min-[465px]:pl-4 min-[465px]:pr-2.5 min-[465px]:py-1.5 max-[464px]:px-3 max-[464px]:py-1.5 rounded-full transition-all duration-300 shadow-sm hover:shadow-md cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                >
+                                    <div className="hidden min-[465px]:flex items-center space-x-2.5">
+                                        <div className="flex items-center space-x-2">
+                                            <span className="relative flex h-2.5 w-2.5 shrink-0"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span></span>
+                                            <span className="text-sm font-semibold text-slate-700 group-hover:text-indigo-700 transition-colors">
+                                                {hasClasses ? `Turma ${selectedClass}` : 'Nenhuma turma'}
+                                            </span>
+                                        </div>
+                                        <div className="w-6 h-6 rounded-full bg-slate-100 group-hover:bg-indigo-50 text-slate-500 group-hover:text-indigo-600 flex items-center justify-center text-[10px] transition-all">▾</div>
+                                    </div>
+                                    <div className="flex min-[465px]:hidden items-center justify-center space-x-1.5">
+                                        <span className="text-base leading-none">📁</span>
+                                        {!hasClasses && <span className="text-xs font-semibold text-slate-700">Nenhuma turma</span>}
+                                        <span className="text-slate-600 text-sm font-bold leading-none">▾</span>
+                                    </div>
+                                </button>
+
+                                {isClassMenuOpen && (
+                                    <div className="absolute right-0 max-[450px]:left-0 max-[450px]:right-0 max-[450px]:mx-auto top-full mt-2 max-[450px]:mt-3 w-[340px] max-w-[92vw] bg-white border border-slate-200 rounded-xl shadow-xl z-50 overflow-hidden animate-slide-up origin-top-right max-[450px]:origin-top">
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); setIsClassesExpanded(!isClassesExpanded); }}
+                                            className="w-full bg-slate-50 px-4 py-3 flex items-center justify-between border-b border-slate-100 hover:bg-slate-100 transition-colors cursor-pointer"
+                                        >
+                                            <div className="flex items-center space-x-2">
+                                                <span className="text-base">📁</span>
+                                                <span className="font-bold text-slate-700 text-sm">Minhas Turmas</span>
+                                            </div>
+                                            <span className={`text-slate-500 transition-transform duration-300 ${isClassesExpanded ? 'rotate-180' : ''}`}>▾</span>
+                                        </button>
+                                        
+                                        <div className={`transition-all duration-300 ease-in-out overflow-y-auto ${isClassesExpanded ? 'max-h-[350px] opacity-100' : 'max-h-0 opacity-0'}`}>
+                                            <ul className="divide-y divide-slate-100">
+                                                {!hasClasses ? (
+                                                    <li className="px-4 py-4 text-center text-xs text-slate-400 italic">
+                                                        Nenhuma turma cadastrada ainda.
+                                                    </li>
+                                                ) : (
+                                                    classesList.map((cls, index) => (
+                                                        <li key={index} className="flex items-stretch hover:bg-indigo-50/30 transition-colors group/item">
+                                                            {editingClassIndex === index ? (
+                                                                <div className="flex-1 flex items-center px-2 sm:px-3 py-2 gap-1.5 sm:gap-2" onClick={e => e.stopPropagation()}>
+                                                                    <input type="text" value={editClassNameTemp} onChange={(e) => setEditClassNameTemp(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveEditClass(e, index); if (e.key === 'Escape') cancelEditClass(e); }} className="flex-1 bg-white border border-indigo-300 rounded-md px-2 py-1.5 text-xs sm:text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm w-full min-w-0" autoFocus placeholder="Nome da turma..." />
+                                                                    <div className="flex shrink-0 space-x-1">
+                                                                        <button onClick={(e) => saveEditClass(e, index)} className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 p-1 sm:p-1.5 rounded-md cursor-pointer transition-colors">✔️</button>
+                                                                        <button onClick={cancelEditClass} className="bg-rose-100 text-rose-700 hover:bg-rose-200 p-1 sm:p-1.5 rounded-md cursor-pointer transition-colors">❌</button>
+                                                                    </div>
+                                                                </div>
+                                                            ) : (
+                                                                <>
+                                                                    <button onClick={() => { setSelectedClass(cls); setIsClassMenuOpen(false); showToast(`Você selecionou a turma ${cls}`, '📁'); }} className={`flex-1 text-left px-3 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm font-semibold transition-colors truncate ${selectedClass === cls ? 'text-indigo-700 bg-indigo-50/50' : 'text-slate-700'}`}>
+                                                                        {cls}
+                                                                    </button>
+                                                                    <div className="flex shrink-0 items-center border-l border-slate-100 bg-slate-50/50 opacity-100 sm:opacity-60 sm:group-hover/item:opacity-100 transition-opacity">
+                                                                        <button onClick={(e) => startEditingClass(e, index, cls)} className="px-2 sm:px-2.5 py-2.5 sm:py-3 text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer">✏️</button>
+                                                                        <button onClick={(e) => removeClass(e, index)} className="px-2 sm:px-2.5 py-2.5 sm:py-3 text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer">🗑️</button>
+                                                                        <button onClick={(e) => { e.stopPropagation(); setSelectedClass(cls); setIsClassMenuOpen(false); setShowInfoModal(true); }} className="px-2 sm:px-3 py-2.5 sm:py-3 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100/50 transition-colors cursor-pointer">ℹ️</button>
+                                                                    </div>
+                                                                </>
+                                                            )}
+                                                        </li>
+                                                    ))
+                                                )}
+                                            </ul>
+                                            <div className="border-t border-slate-200 bg-slate-50/80 p-2">
+                                                {isAddingClass ? (
+                                                    <div className="flex items-center gap-2 p-1" onClick={e => e.stopPropagation()}>
+                                                        <input type="text" placeholder="Nova turma..." value={newClassNameTemp} onChange={(e) => setNewClassNameTemp(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') saveNewClass(e); if (e.key === 'Escape') cancelAddClass(e); }} className="flex-1 bg-white border border-indigo-300 rounded-md px-2 py-1.5 text-sm font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-500 shadow-sm min-w-0 w-full" autoFocus />
+                                                        <div className="flex shrink-0 space-x-1">
+                                                            <button onClick={saveNewClass} className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 p-1.5 rounded-md cursor-pointer transition-colors">✔️</button>
+                                                            <button onClick={cancelAddClass} className="bg-rose-100 text-rose-700 hover:bg-rose-200 p-1.5 rounded-md cursor-pointer transition-colors">❌</button>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <button onClick={startAddingClass} className="w-full text-left px-3 py-2 text-xs font-bold text-indigo-600 hover:bg-indigo-100 hover:text-indigo-700 rounded-lg transition-colors flex items-center gap-2 cursor-pointer">
+                                                        <span className="text-sm">➕</span> Adicionar Nova Turma
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Information Modal */}
+                    {showInfoModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4 animate-fade-in">
+                            <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full overflow-hidden flex flex-col transform transition-all max-h-[90vh]">
+                                <div className="px-4 sm:px-6 py-3.5 sm:py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                                    <div className="flex items-center space-x-2"><span className="text-xl">ℹ️</span><h3 className="font-bold text-slate-900 text-base">Informações - {selectedClass}</h3></div>
+                                    <button onClick={() => setShowInfoModal(false)} className="text-slate-400 hover:text-slate-600 p-2 rounded-lg hover:bg-slate-200/50 transition-colors cursor-pointer">✕</button>
+                                </div>
+                                <div className="p-4 sm:p-6 space-y-4 sm:space-y-5 text-sm overflow-y-auto">
+                                    <div className="bg-indigo-50/50 p-3.5 sm:p-4 rounded-xl border border-indigo-100 flex items-center justify-between gap-2">
+                                        <div className="min-w-0 flex-1"><p className="text-[11px] sm:text-xs font-semibold text-indigo-700 uppercase tracking-wider truncate">Média Geral da Turma</p><p className="text-xl sm:text-2xl font-bold text-indigo-900 mt-1">{generalAvg}</p></div>
+                                        <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-lg sm:text-xl font-bold shrink-0">📊</div>
+                                    </div>
+                                    <div className="stats-grid">
+                                        <div className="stats-grid-row">
+                                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-center"><p className="text-xs text-slate-500 font-medium">Total Alunos</p><p className="text-lg font-bold text-slate-900 mt-1">{students.length}</p></div>
+                                            <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-200 text-center"><p className="text-xs text-emerald-700 font-medium">Aprovados</p><p className="text-lg font-bold text-emerald-700 mt-1">{approvedCount}</p></div>
+                                        </div>
+                                        <div className="bg-amber-50 p-3 rounded-xl border border-amber-200 text-center"><p className="text-xs text-amber-700 font-medium">Recuperação</p><p className="text-lg font-bold text-amber-700 mt-1">{recoveryCount}</p></div>
+                                    </div>
+                                </div>
+                                <div className="px-4 sm:px-6 py-3.5 bg-slate-50 border-t border-slate-200 flex justify-end">
+                                    <button onClick={() => setShowInfoModal(false)} className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-sm px-5 py-2.5 rounded-xl transition-all shadow-sm cursor-pointer text-center">Entendido</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Main Container */}
+                    <main className="flex-1 max-w-7xl w-full max-w-full min-w-0 mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 flex flex-col">
+                        <nav className={`flex space-x-2 border-b border-slate-200 pb-3 mb-5 overflow-x-auto scrollbar-none w-full max-w-full transition-opacity duration-300 ${isAddingMode ? 'opacity-40 pointer-events-none' : ''}`} aria-label="Tabs">
+                            <button onClick={() => setActiveTab('notas')} className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 flex items-center space-x-2 cursor-pointer shrink-0 ${activeTab === 'notas' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}><span>📊</span><span>Notas & Cálculo</span></button>
+                            <button onClick={() => setActiveTab('conversor')} className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 flex items-center space-x-2 cursor-pointer shrink-0 ${activeTab === 'conversor' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}><span>🔄</span><span>Conversor Burocrático</span></button>
+                            <button onClick={() => setActiveTab('pareceres')} className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 flex items-center space-x-2 cursor-pointer shrink-0 ${activeTab === 'pareceres' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100'}`}><span>✍️</span><span className="whitespace-nowrap">Gerador de Pareceres</span></button>
+                        </nav>
+
+                        {/* TAB 1: NOTAS & CÁLCULO */}
+                        {activeTab === 'notas' && (
+                            <div className="flex-1 flex flex-col space-y-5 sm:space-y-6 animate-slide-up">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+                                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between hover:scale-[1.01] transition-all"><div><p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Média Geral</p><h3 className="text-xl sm:text-2xl font-bold text-slate-900 mt-1">{generalAvg}</h3></div><div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-lg sm:text-xl font-bold">📈</div></div>
+                                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between hover:scale-[1.01] transition-all"><div><p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Aprovados</p><h3 className="text-xl sm:text-2xl font-bold text-emerald-600 mt-1">{approvedCount}</h3></div><div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-lg sm:text-xl font-bold">🎉</div></div>
+                                    <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex items-center justify-between hover:scale-[1.01] transition-all"><div><p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Recuperação</p><h3 className="text-xl sm:text-2xl font-bold text-amber-600 mt-1">{recoveryCount}</h3></div><div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-lg sm:text-xl font-bold">⚠️</div></div>
+                                </div>
+
+                                <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs flex flex-col min-[693px]:flex-row min-[693px]:flex-wrap min-[693px]:items-center justify-between gap-4">
+                                    <div className="flex flex-row max-[799px]:flex-col flex-wrap items-center max-[799px]:items-start gap-3 max-[799px]:gap-2 flex-1 min-w-[min-content] w-full min-[693px]:w-auto">
+                                        <span className="text-xs font-bold text-slate-600 uppercase tracking-wider shrink-0">Pesos (%):</span>
+                                        <div className="grid grid-cols-3 min-[693px]:flex min-[693px]:items-center gap-2 w-full min-[693px]:w-auto">
+                                            <div className="flex flex-col min-[693px]:flex-row min-[693px]:items-center space-y-1 min-[693px]:space-y-0 min-[693px]:space-x-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200"><label className="text-[11px] sm:text-xs text-slate-600 font-medium">Prova</label><input type="number" disabled={!hasClasses} value={weights.prova} onChange={(e) => handleWeightChange('prova', e.target.value)} className="w-full min-[693px]:w-14 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs sm:text-sm font-semibold text-center focus:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed" /></div>
+                                            <div className="flex flex-col min-[693px]:flex-row min-[693px]:items-center space-y-1 min-[693px]:space-y-0 min-[693px]:space-x-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200"><label className="text-[11px] sm:text-xs text-slate-600 font-medium">Trabalho</label><input type="number" disabled={!hasClasses} value={weights.trabalho} onChange={(e) => handleWeightChange('trabalho', e.target.value)} className="w-full min-[693px]:w-14 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs sm:text-sm font-semibold text-center focus:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed" /></div>
+                                            <div className="flex flex-col min-[693px]:flex-row min-[693px]:items-center space-y-1 min-[693px]:space-y-0 min-[693px]:space-x-1.5 bg-slate-50 px-2.5 py-1.5 rounded-xl border border-slate-200"><label className="text-[11px] sm:text-xs text-slate-600 font-medium">Atitudinal</label><input type="number" disabled={!hasClasses} value={weights.atitudinal} onChange={(e) => handleWeightChange('atitudinal', e.target.value)} className="w-full min-[693px]:w-14 bg-white border border-slate-300 rounded-lg px-2 py-1 text-xs sm:text-sm font-semibold text-center focus:outline-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed" /></div>
+                                        </div>
+                                        {weightSum !== 100 && <div className="text-[11px] sm:text-xs font-semibold text-rose-500 flex items-center shrink-0">⚠️ A soma atual é {weightSum}%. O ideal é 100%.</div>}
+                                    </div>
+                                    <button onClick={addStudent} disabled={isAddingMode || !hasClasses} className={`text-white px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold shadow-sm transition-all duration-200 flex items-center justify-center space-x-2 shrink-0 max-[692px]:w-full ${isAddingMode || !hasClasses ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 hover:scale-[1.01] active:scale-95 cursor-pointer'}`}>
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 sm:w-5 sm:h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+                                        <span>Adicionar Aluno</span>
+                                    </button>
+                                </div>
+
+                                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden flex-1 flex flex-col w-full max-w-full">
+                                    <div className="overflow-x-auto w-full flex-1">
+                                        <table className="w-full text-left border-collapse min-w-[700px]">
+                                            <thead>
+                                                <tr className="bg-slate-50 text-slate-500 text-xs font-bold uppercase tracking-wider border-b border-slate-200">
+                                                    <th className="py-3.5 px-4">Estudante</th><th className="py-3.5 px-3 text-center">Prova (0-10)</th><th className="py-3.5 px-3 text-center">Trabalho (0-10)</th><th className="py-3.5 px-3 text-center">Atitudinal (0-10)</th><th className="py-3.5 px-3 text-center">Média</th><th className="py-3.5 px-4 text-center">Status Automático</th><th className="py-3.5 px-4 text-center">Ações</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100 text-sm">
+                                                {isAddingMode && newStudentTemp && (
+                                                    <tr className="bg-indigo-50/90 relative z-10 shadow-[inset_0_2px_4px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.05)] ring-2 ring-indigo-400">
+                                                        <td className="py-3 px-4 font-medium text-slate-900 min-w-[180px]"><input type="text" placeholder="Nome completo..." value={newStudentTemp.name} onChange={(e) => setNewStudentTemp({ ...newStudentTemp, name: e.target.value })} autoFocus className="w-full bg-white border border-indigo-300 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 outline-none rounded-md px-2 py-1.5 text-sm font-semibold shadow-sm" /></td>
+                                                        <td className="py-3 px-3 text-center"><input type="number" step="0.1" min="0" max="10" placeholder="0-10" value={newStudentTemp.prova} onChange={(e) => setNewStudentTemp({ ...newStudentTemp, prova: e.target.value })} className="w-16 sm:w-20 bg-white border border-indigo-300 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 outline-none rounded-md px-2 py-1 text-center font-semibold text-slate-800 text-sm shadow-sm" /></td>
+                                                        <td className="py-3 px-3 text-center"><input type="number" step="0.1" min="0" max="10" placeholder="0-10" value={newStudentTemp.trabalho} onChange={(e) => setNewStudentTemp({ ...newStudentTemp, trabalho: e.target.value })} className="w-16 sm:w-20 bg-white border border-indigo-300 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 outline-none rounded-md px-2 py-1 text-center font-semibold text-slate-800 text-sm shadow-sm" /></td>
+                                                        <td className="py-3 px-3 text-center"><input type="number" step="0.1" min="0" max="10" placeholder="0-10" value={newStudentTemp.atitudinal} onChange={(e) => setNewStudentTemp({ ...newStudentTemp, atitudinal: e.target.value })} className="w-16 sm:w-20 bg-white border border-indigo-300 focus:border-indigo-600 focus:ring-1 focus:ring-indigo-600 outline-none rounded-md px-2 py-1 text-center font-semibold text-slate-800 text-sm shadow-sm" /></td>
+                                                        <td className="py-3 px-3 text-center font-bold text-slate-400">-</td>
+                                                        <td className="py-3 px-4 text-center"><span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap bg-slate-200 text-slate-500">Pendente</span></td>
+                                                        <td className="py-3 px-4 text-center"><div className="flex items-center justify-center space-x-1"><button onClick={handleSaveNewStudent} className="bg-emerald-500 hover:bg-emerald-600 text-white p-1.5 rounded-lg shadow-sm transition-colors cursor-pointer" title="Salvar Novo Aluno">✔️</button><button onClick={handleCancelNewStudent} className="bg-rose-500 hover:bg-rose-600 text-white p-1.5 rounded-lg shadow-sm transition-colors cursor-pointer" title="Cancelar Inclusão">❌</button></div></td>
+                                                    </tr>
+                                                )}
+                                                {students.map((student, index) => {
+                                                    const avg = calculateWeightedAverage(student);
+                                                    const statusInfo = getStudentStatus(avg);
+                                                    return (
+                                                        <tr key={student.id} className={`transition-colors duration-200 ${isAddingMode ? 'opacity-40 pointer-events-none' : 'hover:bg-slate-50/80'}`}>
+                                                            <td className="py-3 px-4 font-medium text-slate-900 min-w-[180px]"><input type="text" value={student.name} disabled={isAddingMode} onChange={(e) => updateStudentField(index, 'name', e.target.value)} className="w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:outline-none py-1 text-sm font-medium disabled:bg-transparent" /></td>
+                                                            <td className="py-3 px-3 text-center"><input type="number" step="0.1" min="0" max="10" value={student.prova} disabled={isAddingMode} onChange={(e) => updateStudentField(index, 'prova', e.target.value)} className="w-16 sm:w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-center font-semibold text-slate-800 focus:outline-indigo-500 text-sm disabled:opacity-70 disabled:bg-slate-100" /></td>
+                                                            <td className="py-3 px-3 text-center"><input type="number" step="0.1" min="0" max="10" value={student.trabalho} disabled={isAddingMode} onChange={(e) => updateStudentField(index, 'trabalho', e.target.value)} className="w-16 sm:w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-center font-semibold text-slate-800 focus:outline-indigo-500 text-sm disabled:opacity-70 disabled:bg-slate-100" /></td>
+                                                            <td className="py-3 px-3 text-center"><input type="number" step="0.1" min="0" max="10" value={student.atitudinal} disabled={isAddingMode} onChange={(e) => updateStudentField(index, 'atitudinal', e.target.value)} className="w-16 sm:w-20 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-center font-semibold text-slate-800 focus:outline-indigo-500 text-sm disabled:opacity-70 disabled:bg-slate-100" /></td>
+                                                            <td className="py-3 px-3 text-center font-bold text-slate-900">{avg.toFixed(1)}</td>
+                                                            <td className="py-3 px-4 text-center"><span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap ${statusInfo.color}`}>{statusInfo.status}</span></td>
+                                                            <td className="py-3 px-4 text-center"><button onClick={() => removeStudent(index)} disabled={isAddingMode} className="text-slate-400 hover:text-rose-600 transition-colors p-2 rounded-lg hover:bg-rose-50 cursor-pointer disabled:cursor-not-allowed" title="Remover Aluno">🗑️</button></td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                                {!hasClasses && (
+                                                    <tr>
+                                                        <td colSpan="7" className="py-16 px-4 bg-slate-50/30">
+                                                            <div className="flex flex-col items-center justify-center text-center space-y-3">
+                                                                <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 shadow-sm flex items-center justify-center text-3xl mb-1">📁</div>
+                                                                <h4 className="font-bold text-slate-700 text-base">Nenhuma turma cadastrada</h4>
+                                                                <p className="text-sm text-slate-500 max-w-md mx-auto">
+                                                                    Bem-vindo ao seu diário! Para começar a lançar notas e gerenciar seus estudantes, crie a sua primeira turma no seletor superior ou clicando no botão abaixo.
+                                                                </p>
+                                                                <button onClick={openCreateClassMenu} className="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm transition-all duration-200 hover:scale-[1.01] active:scale-95 flex items-center space-x-2 cursor-pointer">
+                                                                    <span>➕</span><span>Criar Primeira Turma</span>
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                                {hasClasses && students.length === 0 && !isAddingMode && (
+                                                    <tr><td colSpan="7" className="py-16 px-4 bg-slate-50/30"><div className="flex flex-col items-center justify-center text-center space-y-3"><div className="w-16 h-16 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center justify-center text-3xl mb-1">📋</div><h4 className="font-bold text-slate-700 text-base">Turma Vazia</h4><p className="text-sm text-slate-500 max-w-sm mx-auto">Aguardando cadastro. Clique no botão <strong className="text-indigo-600 font-semibold">➕ Adicionar Aluno</strong> acima para iniciar o preenchimento do diário desta turma.</p></div></td></tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* TAB 2: CONVERSOR */}
+                        {activeTab === 'conversor' && (
+                            <div className="flex-1 flex flex-col space-y-4 sm:space-y-6 animate-slide-up w-full max-w-full min-w-0">
+                                <div className="bg-white p-4 sm:p-5 lg:p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col md:flex-row items-start md:items-center justify-between gap-4 w-full">
+                                    <div className="min-w-0 w-full md:w-auto">
+                                        <h2 className="text-base sm:text-lg font-bold text-slate-900 truncate">Configuração de Exportação</h2>
+                                        <p className="text-xs text-slate-500 mt-0.5">Selecione o padrão exigido.</p>
+                                    </div>
+                                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-3 w-full md:w-auto min-w-0">
+                                        <label className="text-[11px] sm:text-xs font-bold text-slate-600 uppercase tracking-wider shrink-0">Padrão:</label>
+                                        <select value={exportStandard} onChange={(e) => setExportStandard(e.target.value)} className="w-full sm:min-w-[280px] md:max-w-[300px] bg-slate-50 border border-slate-300 rounded-xl px-3 sm:px-4 py-2.5 text-xs sm:text-sm font-semibold text-slate-800 focus:outline-indigo-500 focus:ring-1 focus:ring-indigo-500 cursor-pointer shadow-sm truncate">
+                                            <option value="conceitos">Padrão Sistema Escolar (Conceitos)</option>
+                                            <option value="csv">Padrão CSV (Delimitador ;)</option>
+                                            <option value="detalhado">Relatório Detalhado</option>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="bg-white rounded-2xl border border-slate-200 shadow-xs flex-1 flex flex-col overflow-hidden min-h-[400px] w-full max-w-full">
+                                    <div className="bg-slate-50 px-5 sm:px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 w-full">
+                                        <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Pré-visualização</span>
+                                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+                                            <button onClick={downloadFile} disabled={!hasClasses || students.length === 0} className={`w-full sm:w-auto text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all duration-200 shadow-sm flex items-center justify-center space-x-2 ${!hasClasses || students.length === 0 ? 'bg-emerald-300 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 hover:scale-[1.01] active:scale-95 cursor-pointer'}`}><span>💾</span><span>Baixar Arquivo</span></button>
+                                            <button onClick={() => copyToClipboard(generateExporterContent(), "Dados copiados!")} disabled={!hasClasses || students.length === 0} className={`w-full sm:w-auto text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all duration-200 shadow-sm flex items-center justify-center space-x-2 ${!hasClasses || students.length === 0 ? 'bg-slate-400 cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800 hover:scale-[1.01] active:scale-95 cursor-pointer'}`}><span>📋</span><span>Copiar Dados</span></button>
+                                        </div>
+                                    </div>
+                                    <div className={`p-4 sm:p-6 flex-1 overflow-x-auto bg-slate-900 text-slate-200 font-mono text-xs sm:text-sm rounded-b-2xl w-full max-w-full ${!hasClasses || students.length === 0 ? 'flex items-center justify-center' : ''}`}>
+                                        {!hasClasses ? (
+                                            <div className="flex flex-col items-center justify-center text-center space-y-3 my-8 font-sans">
+                                                <div className="w-16 h-16 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-3xl mb-1">📁</div>
+                                                <h4 className="font-bold text-slate-200 text-base">Nenhuma turma cadastrada</h4>
+                                                <p className="text-sm text-slate-400 max-w-md mx-auto">
+                                                    Você ainda não criou nenhuma turma. Cadastre a sua primeira turma no menu superior e adicione alunos para exportar relatórios.
+                                                </p>
+                                                <button onClick={openCreateClassMenu} className="mt-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm transition-all duration-200 flex items-center space-x-2 cursor-pointer">
+                                                    <span>➕</span><span>Criar Primeira Turma</span>
+                                                </button>
+                                            </div>
+                                        ) : students.length === 0 ? (
+                                            <div className="flex flex-col items-center justify-center text-center space-y-3 opacity-70 my-8"><div className="w-16 h-16 rounded-2xl bg-slate-800 border border-slate-700 flex items-center justify-center text-3xl mb-1">📭</div><h4 className="font-bold text-slate-300 text-base">Nenhum dado</h4><p className="text-sm text-slate-400 max-w-sm mx-auto">A turma atual não possui alunos.</p></div>
+                                        ) : (<pre className="whitespace-pre-wrap break-all w-full">{generateExporterContent()}</pre>)}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* TAB 3: PARECERES */}
+                        {activeTab === 'pareceres' && (
+                            <div className="flex-1 flex flex-col space-y-5 sm:space-y-6 animate-slide-up">
+                                {!hasClasses ? (
+                                    <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col items-center justify-center p-8 text-center min-h-[400px]">
+                                        <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-3xl mb-4 shadow-sm">📁</div>
+                                        <h4 className="font-bold text-slate-700 text-lg">Nenhuma turma cadastrada</h4>
+                                        <p className="text-sm text-slate-500 max-w-md mx-auto mt-2">
+                                            Para gerar pareceres descritivos e planos de intervenção pedagógica, cadastre primeiro uma turma e adicione seus estudantes.
+                                        </p>
+                                        <button onClick={openCreateClassMenu} className="mt-5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-semibold px-4 py-2.5 rounded-xl shadow-sm transition-all duration-200 hover:scale-[1.01] active:scale-95 flex items-center space-x-2 cursor-pointer">
+                                            <span>➕</span><span>Criar Primeira Turma</span>
+                                        </button>
+                                    </div>
+                                ) : students.length === 0 ? (
+                                    <div className="flex-1 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col items-center justify-center p-8 text-center min-h-[400px]">
+                                        <div className="w-16 h-16 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-3xl mb-4 shadow-sm">📝</div>
+                                        <h4 className="font-bold text-slate-700 text-lg">Turma sem alunos</h4>
+                                        <p className="text-sm text-slate-500 max-w-md mx-auto mt-2">Não é possível gerar pareceres no momento. Volte para a aba <strong className="text-indigo-600 font-semibold cursor-pointer hover:underline" onClick={() => setActiveTab('notas')}>Notas & Cálculo</strong>.</p>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 sm:gap-6 flex-1">
+                                        <div className="lg:col-span-4 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col overflow-hidden">
+                                            <div className="bg-slate-50 px-4 sm:px-5 py-4 border-b border-slate-200">
+                                                <h3 className="font-bold text-slate-800 text-sm">Selecione o Estudante</h3>
+                                                <p className="text-xs text-slate-500 mt-0.5">Clique para gerar seu parecer.</p>
+                                            </div>
+                                            <div className="flex-1 overflow-y-auto p-2 sm:p-3 space-y-1 sm:space-y-1.5 max-h-[400px] lg:max-h-[calc(100vh-250px)]">
+                                                {students.map(student => {
+                                                    const avg = calculateWeightedAverage(student);
+                                                    return (
+                                                        <button key={student.id} onClick={() => setSelectedStudentId(student.id)} className={`w-full text-left px-3 py-2.5 rounded-xl border transition-all flex items-center justify-between cursor-pointer ${selectedStudentId === student.id ? 'bg-indigo-50 border-indigo-200 shadow-sm ring-1 ring-indigo-500' : 'bg-transparent border-transparent hover:bg-slate-50 hover:border-slate-200'}`}>
+                                                            <div className="flex flex-col min-w-0 pr-2"><span className={`text-xs sm:text-sm font-semibold truncate ${selectedStudentId === student.id ? 'text-indigo-800' : 'text-slate-700'}`}>{student.name}</span><span className={`text-[10px] mt-0.5 ${selectedStudentId === student.id ? 'text-indigo-600' : 'text-slate-500'}`}>Média: {avg.toFixed(1)}</span></div>
+                                                            <span className={`shrink-0 inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold ${avg >= 6.0 ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>{avg >= 6.0 ? 'Aprovado' : 'Recuperação'}</span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+
+                                        <div className="lg:col-span-8 bg-white rounded-2xl border border-slate-200 shadow-xs flex flex-col overflow-hidden">
+                                            {selectedStudent ? (() => {
+                                                const avg = calculateWeightedAverage(selectedStudent);
+                                                const generatedText = generateDescriptiveText(selectedStudent, avg);
+                                                const interventionText = generateInterventionPlan(selectedStudent, avg);
+                                                const currentParecerText = selectedStudent.texto_parecer ?? generatedText;
+                                                const currentPipText = selectedStudent.texto_pip ?? interventionText;
+                                                return (
+                                                    <div className="p-4 sm:p-6 flex-1 flex flex-col space-y-5 sm:space-y-6 overflow-y-auto">
+                                                        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between pb-4 border-b border-slate-100 gap-3">
+                                                            <div><h3 className="text-base sm:text-lg font-bold text-slate-900">{selectedStudent.name}</h3><p className="text-xs text-slate-500">Parecer e Plano de Intervenção</p></div>
+                                                            <div className="flex items-center space-x-2 w-full sm:w-auto justify-between sm:justify-start">
+                                                                <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700">Média: {avg.toFixed(1)}</span>
+                                                                <span className={`text-xs font-semibold px-3 py-1.5 rounded-lg ${avg >= 6.0 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>{avg >= 6.0 ? 'Aprovado' : 'Recuperação'}</span>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="space-y-4">
+                                                            <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">Comportamento e Desempenho</h4>
+                                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                                                                <div className="bg-slate-50 p-3 sm:p-3.5 rounded-xl border border-slate-200"><label className="text-xs font-semibold text-slate-700 block mb-2">Participação:</label><select value={selectedStudent.participacao} onChange={(e) => updateStudentTrait(selectedStudent.id, 'participacao', e.target.value)} className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800 focus:outline-indigo-500 shadow-xs cursor-pointer">{['Baixa', 'Média', 'Alta'].map(opt => (<option key={opt} value={opt}>{opt}</option>))}</select></div>
+                                                                <div className="bg-slate-50 p-3 sm:p-3.5 rounded-xl border border-slate-200"><label className="text-xs font-semibold text-slate-700 block mb-2">Comportamento:</label><select value={selectedStudent.comportamento} onChange={(e) => updateStudentTrait(selectedStudent.id, 'comportamento', e.target.value)} className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800 focus:outline-indigo-500 shadow-xs cursor-pointer">{['Distraído', 'Neutro', 'Colaborativo'].map(opt => (<option key={opt} value={opt}>{opt}</option>))}</select></div>
+                                                                <div className="bg-slate-50 p-3 sm:p-3.5 rounded-xl border border-slate-200"><label className="text-xs font-semibold text-slate-700 block mb-2">Evolução:</label><select value={selectedStudent.evolucao} onChange={(e) => updateStudentTrait(selectedStudent.id, 'evolucao', e.target.value)} className="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800 focus:outline-indigo-500 shadow-xs cursor-pointer">{['Oscilante', 'Linear', 'Constante'].map(opt => (<option key={opt} value={opt}>{opt}</option>))}</select></div>
+                                                            </div>
+                                                            {avg < 6.0 && (
+                                                                <div className="bg-amber-50/50 p-3.5 rounded-xl border border-amber-200">
+                                                                    <label className="text-xs font-semibold text-amber-900 block mb-2">Foco de Intervenção Pedagógica:</label>
+                                                                    <input type="text" value={selectedStudent.intervencaoFoco || ""} onChange={(e) => updateStudentTrait(selectedStudent.id, 'intervencaoFoco', e.target.value)} className="w-full bg-white border border-amber-300 rounded-lg px-3 py-2 text-xs sm:text-sm font-semibold text-slate-800 focus:outline-amber-500 shadow-xs" placeholder="Ex: Reforço em equações de 1º grau" />
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        <div className="flex flex-col space-y-2 mt-2">
+                                                            <div className="flex max-[464px]:flex-col min-[465px]:flex-row max-[464px]:items-start min-[465px]:items-center justify-between gap-3"><label className="text-xs font-bold text-slate-600 uppercase tracking-wider">Parecer Descritivo do Boletim</label><button onClick={() => copyToClipboard(currentParecerText, "Parecer descritivo copiado!")} className="max-[464px]:w-full min-[465px]:w-auto bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all duration-200 hover:scale-[1.01] active:scale-95 shadow-sm flex items-center justify-center space-x-2 cursor-pointer shrink-0"><span>📋</span><span>Copiar Parecer</span></button></div>
+                                                            <textarea rows="4" value={currentParecerText} onChange={(e) => updateStudentCustomText(selectedStudent.id, 'texto_parecer', e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 text-xs sm:text-sm text-slate-700 leading-relaxed focus:outline-indigo-500 font-sans resize-none" />
+                                                        </div>
+
+                                                        {avg < 6.0 && (
+                                                            <div className="flex flex-col space-y-2 mt-2">
+                                                                <div className="flex max-[464px]:flex-col min-[465px]:flex-row max-[464px]:items-start min-[465px]:items-center justify-between gap-3"><label className="text-xs font-bold text-amber-700 uppercase tracking-wider">Plano de Intervenção (PIP)</label><button onClick={() => copyToClipboard(currentPipText, "Plano PIP copiado!")} className="max-[464px]:w-full min-[465px]:w-auto bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all duration-200 hover:scale-[1.01] active:scale-95 shadow-sm flex items-center justify-center space-x-2 cursor-pointer shrink-0"><span>📋</span><span>Copiar Plano PIP</span></button></div>
+                                                                <textarea rows="10" value={currentPipText} onChange={(e) => updateStudentCustomText(selectedStudent.id, 'texto_pip', e.target.value)} className="w-full bg-amber-50/50 border border-amber-200 rounded-2xl p-4 text-xs sm:text-sm text-slate-700 leading-relaxed focus:outline-amber-500 font-sans resize-none" />
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })() : (
+                                                <div className="flex flex-col items-center justify-center flex-1 py-20 text-center px-4"><div className="w-16 h-16 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center text-3xl mb-4">👈</div><h4 className="font-bold text-slate-800 text-lg">Nenhum aluno selecionado</h4><p className="text-sm text-slate-500 max-w-sm mt-1">Selecione um aluno na lista ao lado.</p></div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </main>
+                    
+                    {/* Rodapé Profissional */}
+                    <footer className="mt-auto w-full max-w-full border-t border-slate-200 bg-white py-4 sm:py-5">
+                        <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8">
+                            
+                            {/* Layout Celular (< 678px) */}
+                            <div className="flex flex-col min-[678px]:hidden w-full gap-2">
+                                {/* Linha 1 */}
+                                <div className="flex items-center justify-between w-full gap-2">
+                                    <div className="flex items-center space-x-1.5 shrink-0">
+                                        <span className="text-indigo-600 text-sm leading-none">📚</span>
+                                        <span className="font-bold text-slate-800 text-xs sm:text-sm">Super Diário <span className="text-indigo-600">Inteligente</span> <span className="text-slate-300 font-normal">|</span></span>
+                                    </div>
+                                    <span className="text-[10px] sm:text-xs font-semibold text-slate-500 tracking-wider uppercase text-right shrink-0">Painel Docente</span>
+                                </div>
+                                {/* Linha 2 */}
+                                <div className="flex items-center justify-between w-full gap-2">
+                                    <span className="text-[10px] sm:text-xs font-medium text-slate-500">© 2026 Todos os direitos reservados.</span>
+                                    <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-[10px] font-bold text-slate-500 shadow-sm shrink-0">v1.0</span>
+                                </div>
+                            </div>
+
+                            {/* Layout Computador (>= 678px) */}
+                            <div className="hidden min-[678px]:flex flex-row items-center justify-between gap-3 w-full">
+                                <div className="flex items-center gap-2 text-left">
+                                    <div className="flex items-center space-x-2 shrink-0">
+                                        <span className="text-indigo-600 text-base leading-none">📚</span>
+                                        <span className="font-bold text-slate-800 text-sm">Super Diário <span className="text-indigo-600">Inteligente</span></span>
+                                    </div>
+                                    <span className="text-slate-300">|</span>
+                                    <span className="text-xs font-medium text-slate-500">© 2026 Todos os direitos reservados.</span>
+                                </div>
+                                <div className="flex items-center space-x-3">
+                                    <span className="text-xs font-semibold text-slate-500 tracking-wider uppercase">Painel Docente</span>
+                                    <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 text-[10px] font-bold text-slate-500 shadow-sm">v1.0</span>
+                                </div>
+                            </div>
+
+                        </div>
+                    </footer>
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
